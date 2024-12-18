@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import logoLasLight from './lars.png'; // Import the image
 
 const Snowflakes = () => {
   const [snowflakes, setSnowflakes] = useState([]);
@@ -8,8 +9,8 @@ const Snowflakes = () => {
       const snowflake = {
         id: Date.now(),
         x: Math.random() * window.innerWidth,
-        y: -10,
-        size: Math.random() * 3 + 2,
+        y: -100, // Increased initial y to account for image size
+        size: Math.random() * 50 + 30, // Larger size range for image
         speed: Math.random() * 3 + 1
       };
       setSnowflakes(prev => [...prev, snowflake]);
@@ -44,17 +45,19 @@ const Snowflakes = () => {
       zIndex: 9999
     }}>
       {snowflakes.map(flake => (
-        <div
+        <img
           key={flake.id}
+          src={logoLasLight}
+          alt="Falling logo"
           style={{
             position: 'absolute',
             left: `${flake.x}px`,
             top: `${flake.y}px`,
             width: `${flake.size}px`,
             height: `${flake.size}px`,
-            backgroundColor: 'white',
-            borderRadius: '50%',
-            opacity: 0.7
+            opacity: 0.7,
+            objectFit: 'contain',
+            borderRadius: '50px'
           }}
         />
       ))}
