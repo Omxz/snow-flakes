@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import logoLasLight from './lars.png'; // Import the image
 
 const Snowflakes = () => {
   const [snowflakes, setSnowflakes] = useState([]);
@@ -9,9 +8,10 @@ const Snowflakes = () => {
       const snowflake = {
         id: Date.now(),
         x: Math.random() * window.innerWidth,
-        y: -100, // Increased initial y to account for image size
-        size: Math.random() * 50 + 30, // Larger size range for image
-        speed: Math.random() * 3 + 1
+        y: -10,
+        size: Math.random() * 4 + 2, // Smaller size for snowflakes
+        speed: Math.random() * 2 + 1,
+        opacity: Math.random() * 0.6 + 0.4 // Random opacity for depth effect
       };
       setSnowflakes(prev => [...prev, snowflake]);
     };
@@ -20,13 +20,14 @@ const Snowflakes = () => {
       setSnowflakes(prev =>
         prev.map(flake => ({
           ...flake,
-          y: flake.y + flake.speed
+          y: flake.y + flake.speed,
+          x: flake.x + Math.sin(flake.y * 0.02) * 0.5 // Add gentle horizontal movement
         })).filter(flake => flake.y < window.innerHeight)
       );
     };
 
-    const snowInterval = setInterval(createSnowflake, 200);
-    const animationFrame = setInterval(animateSnowflakes, 50);
+    const snowInterval = setInterval(createSnowflake, 100);
+    const animationFrame = setInterval(animateSnowflakes, 30);
 
     return () => {
       clearInterval(snowInterval);
@@ -42,22 +43,23 @@ const Snowflakes = () => {
       width: '100%',
       height: '100%',
       pointerEvents: 'none',
-      zIndex: 9999
+      zIndex: 9999,
+      overflow: 'hidden'
     }}>
       {snowflakes.map(flake => (
-        <img
+        <div
           key={flake.id}
-          src={logoLasLight}
-          alt="Falling logo"
           style={{
             position: 'absolute',
             left: `${flake.x}px`,
             top: `${flake.y}px`,
             width: `${flake.size}px`,
             height: `${flake.size}px`,
-            opacity: 0.7,
-            objectFit: 'contain',
-            borderRadius: '50px'
+            backgroundColor: '#fff',
+            borderRadius: '50%',
+            opacity: flake.opacity,
+            boxShadow: '0 0 10px rgba(255, 255, 255, 0.8)',
+            transition: 'left 0.3s ease'
           }}
         />
       ))}
