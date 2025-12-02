@@ -84,7 +84,7 @@ const StarParticleMaterial = shaderMaterial(
 
       // Boost brightness significantly
       vec3 brightColor = vColor * (1.5 + core * 1.0);
-      
+
       gl_FragColor = vec4(brightColor, alpha);
     }
   `
