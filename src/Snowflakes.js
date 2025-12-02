@@ -3,9 +3,9 @@ import { Canvas, useFrame, extend, useThree } from '@react-three/fiber';
 import { shaderMaterial } from '@react-three/drei';
 import * as THREE from 'three';
 
-// Custom shader for circular glowing particles
+// Custom shader for circular glowing particles - FLASHY VERSION
 const CircleParticleMaterial = shaderMaterial(
-  { opacity: 1.0 },
+  { opacity: 1.0, time: 0 },
   // Vertex shader
   `
     attribute float size;
@@ -18,11 +18,11 @@ const CircleParticleMaterial = shaderMaterial(
       vColor = color;
       vOpacity = opacity;
       vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-      gl_PointSize = size * (300.0 / -mvPosition.z);
+      gl_PointSize = size * (400.0 / -mvPosition.z);
       gl_Position = projectionMatrix * mvPosition;
     }
   `,
-  // Fragment shader - creates soft circular glow
+  // Fragment shader - creates intense glowing particles
   `
     varying vec3 vColor;
     varying float vOpacity;
@@ -31,23 +31,236 @@ const CircleParticleMaterial = shaderMaterial(
       vec2 center = gl_PointCoord - vec2(0.5);
       float dist = length(center);
 
-      // Soft circular falloff
-      float alpha = 1.0 - smoothstep(0.0, 0.5, dist);
+      // DISCARD corners to make circular - this is key!
+      if (dist > 0.5) discard;
 
-      // Add glow effect
-      float glow = exp(-dist * 3.0) * 0.5;
-      alpha = alpha + glow;
+      // Soft circular glow with bright center
+      float circle = 1.0 - smoothstep(0.0, 0.5, dist);
+      float core = 1.0 - smoothstep(0.0, 0.2, dist);
+      float glow = exp(-dist * 4.0) * 0.8;
+
+      float alpha = circle * (0.6 + core * 0.4 + glow * 0.3);
 
       if (alpha < 0.01) discard;
 
-      gl_FragColor = vec4(vColor, alpha * vOpacity);
+      // Boost brightness for flashy effect
+      vec3 boostedColor = vColor * (1.2 + core * 1.5);
+
+      gl_FragColor = vec4(boostedColor, alpha * vOpacity);
     }
   `
 );
 
 extend({ CircleParticleMaterial });
 
-// Custom shader for background stars with twinkle - BRIGHT version
+// Nebula shader material - volumetric cosmic clouds
+const NebulaMaterial = shaderMaterial(
+  { time: 0 },
+  `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  `
+    uniform float time;
+    varying vec2 vUv;
+
+    // Simplex-like noise
+    float hash(vec2 p) {
+      return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+    }
+
+    float noise(vec2 p) {
+      vec2 i = floor(p);
+      vec2 f = fract(p);
+      f = f * f * (3.0 - 2.0 * f);
+      float a = hash(i);
+      float b = hash(i + vec2(1.0, 0.0));
+      float c = hash(i + vec2(0.0, 1.0));
+      float d = hash(i + vec2(1.0, 1.0));
+      return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+    }
+
+    float fbm(vec2 p) {
+      float sum = 0.0;
+      float amp = 0.5;
+      float freq = 1.0;
+      for(int i = 0; i < 6; i++) {
+        sum += amp * noise(p * freq);
+        freq *= 2.0;
+        amp *= 0.5;
+      }
+      return sum;
+    }
+
+    void main() {
+      vec2 uv = vUv - 0.5;
+      float dist = length(uv);
+
+      // Avoid drawing over the black hole center
+      if (dist < 0.08) discard;
+
+      // Moving nebula coordinates
+      vec2 nebUv = uv * 2.0;
+      float t = time * 0.02;
+
+      // Multiple layers of nebula with different colors
+      float n1 = fbm(nebUv * 3.0 + vec2(t, t * 0.5));
+      float n2 = fbm(nebUv * 2.0 - vec2(t * 0.7, t * 0.3) + 100.0);
+      float n3 = fbm(nebUv * 4.0 + vec2(t * 0.4, -t * 0.6) + 200.0);
+      float n4 = fbm(nebUv * 1.5 + vec2(-t * 0.3, t * 0.8) + 300.0);
+
+      // Purple/magenta nebula
+      vec3 purple = vec3(0.6, 0.2, 0.8) * n1 * 1.5;
+
+      // Cyan/teal nebula
+      vec3 cyan = vec3(0.1, 0.7, 0.9) * n2 * 1.2;
+
+      // Pink/rose nebula
+      vec3 pink = vec3(1.0, 0.4, 0.6) * n3 * 1.0;
+
+      // Golden/orange wisps
+      vec3 gold = vec3(1.0, 0.7, 0.2) * n4 * 0.8;
+
+      // Combine nebula colors
+      vec3 nebula = purple + cyan * 0.7 + pink * 0.5 + gold * 0.4;
+
+      // Add some bright star-like sparkles
+      float sparkle = pow(noise(nebUv * 20.0 + t * 0.5), 8.0) * 2.0;
+      nebula += vec3(1.0, 0.9, 0.95) * sparkle;
+
+      // Fade based on distance from center - more visible further out
+      float fade = smoothstep(0.08, 0.15, dist) * smoothstep(0.7, 0.4, dist);
+
+      // Pulse effect
+      float pulse = 0.8 + 0.2 * sin(time * 0.5 + dist * 5.0);
+      nebula *= pulse;
+
+      float alpha = (n1 + n2 * 0.7 + n3 * 0.5) * fade * 0.6;
+
+      gl_FragColor = vec4(nebula, alpha);
+    }
+  `
+);
+
+extend({ NebulaMaterial });
+
+// Lens flare / light ray shader
+const LensFlareMaterial = shaderMaterial(
+  { time: 0 },
+  `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  `
+    uniform float time;
+    varying vec2 vUv;
+
+    void main() {
+      vec2 center = vUv - 0.5;
+      float dist = length(center);
+      float angle = atan(center.y, center.x);
+
+      // Create radiating rays
+      float rays = pow(abs(sin(angle * 8.0 + time * 0.3)), 20.0);
+      rays += pow(abs(sin(angle * 12.0 - time * 0.2)), 25.0) * 0.5;
+      rays += pow(abs(sin(angle * 6.0 + time * 0.15)), 15.0) * 0.3;
+
+      // Fade rays with distance
+      float rayIntensity = rays * exp(-dist * 4.0) * smoothstep(0.0, 0.05, dist);
+
+      // Central glow
+      float glow = exp(-dist * 8.0) * 0.5;
+
+      // Ring flares
+      float ring1 = exp(-pow((dist - 0.15) * 30.0, 2.0)) * 0.3;
+      float ring2 = exp(-pow((dist - 0.25) * 40.0, 2.0)) * 0.2;
+
+      float intensity = rayIntensity + glow + ring1 + ring2;
+
+      // Colorful lens flare
+      vec3 col = vec3(1.0, 0.9, 0.8) * glow;
+      col += vec3(1.0, 0.6, 0.3) * rayIntensity;
+      col += vec3(0.5, 0.8, 1.0) * ring1;
+      col += vec3(1.0, 0.5, 0.8) * ring2;
+
+      // Pulse
+      col *= 0.9 + 0.1 * sin(time * 2.0);
+
+      if (intensity < 0.01) discard;
+
+      gl_FragColor = vec4(col, intensity * 0.8);
+    }
+  `
+);
+
+extend({ LensFlareMaterial });
+
+// Energy jet shader
+const EnergyJetMaterial = shaderMaterial(
+  { time: 0, direction: 1.0 },
+  `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  `
+    uniform float time;
+    uniform float direction;
+    varying vec2 vUv;
+
+    float noise(vec2 p) {
+      return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+    }
+
+    void main() {
+      vec2 uv = vUv;
+
+      // Jet flows along Y axis
+      float y = uv.y;
+      float x = uv.x - 0.5;
+
+      // Jet shape - narrow cone
+      float width = 0.05 + y * 0.15;
+      float jetShape = smoothstep(width, width * 0.3, abs(x));
+
+      // Noise for turbulence
+      float n = noise(vec2(x * 10.0, y * 5.0 - time * direction * 2.0));
+      float n2 = noise(vec2(x * 20.0, y * 10.0 - time * direction * 3.0));
+
+      // Intensity fades along jet
+      float intensity = jetShape * (1.0 - y * 0.7);
+      intensity *= 0.7 + 0.3 * n;
+
+      // Color - hot blue/white core, purple edges
+      vec3 core = vec3(0.7, 0.85, 1.0);
+      vec3 edge = vec3(0.6, 0.3, 1.0);
+      vec3 col = mix(edge, core, jetShape);
+
+      // Add sparkles
+      float sparkle = pow(n2, 5.0) * jetShape * 2.0;
+      col += vec3(1.0) * sparkle;
+
+      // Pulse
+      intensity *= 0.8 + 0.2 * sin(time * 3.0 + y * 10.0);
+
+      if (intensity < 0.01) discard;
+
+      gl_FragColor = vec4(col * 1.5, intensity * 0.7);
+    }
+  `
+);
+
+extend({ EnergyJetMaterial });
+
+// Custom shader for background stars with twinkle - ULTRA BRIGHT FLASHY version
 const StarParticleMaterial = shaderMaterial(
   { time: 0 },
   // Vertex shader
@@ -61,11 +274,11 @@ const StarParticleMaterial = shaderMaterial(
       vColor = color;
       vSize = size;
       vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-      gl_PointSize = size * (400.0 / -mvPosition.z);
+      gl_PointSize = size * (600.0 / -mvPosition.z);
       gl_Position = projectionMatrix * mvPosition;
     }
   `,
-  // Fragment shader - creates bright star-like points
+  // Fragment shader - creates ultra bright star-like points with color
   `
     varying vec3 vColor;
     varying float vSize;
@@ -74,16 +287,28 @@ const StarParticleMaterial = shaderMaterial(
       vec2 center = gl_PointCoord - vec2(0.5);
       float dist = length(center);
 
-      // Bright sharp center with strong glow
+      // DISCARD corners to make circular
+      if (dist > 0.5) discard;
+
+      // Bright sharp center with circular glow
+      float circle = 1.0 - smoothstep(0.3, 0.5, dist);
       float core = 1.0 - smoothstep(0.0, 0.1, dist);
-      float glow = exp(-dist * 3.0) * 0.8;
-      float outerGlow = exp(-dist * 1.5) * 0.3;
-      float alpha = core + glow + outerGlow;
+      float innerGlow = exp(-dist * 6.0) * 0.9;
+      float midGlow = exp(-dist * 3.0) * 0.5;
+
+      // Subtle cross/spike pattern (within circle)
+      float spike = max(
+        exp(-abs(center.x) * 20.0) * exp(-abs(center.y) * 5.0),
+        exp(-abs(center.y) * 20.0) * exp(-abs(center.x) * 5.0)
+      ) * 0.3 * circle;
+
+      float alpha = (core + innerGlow + midGlow + spike) * circle;
+      alpha = max(alpha, circle * 0.3);
 
       if (alpha < 0.01) discard;
 
-      // Boost brightness significantly
-      vec3 brightColor = vColor * (1.5 + core * 1.0);
+      // Boost brightness
+      vec3 brightColor = vColor * (1.8 + core * 2.0);
 
       gl_FragColor = vec4(brightColor, alpha);
     }
@@ -92,7 +317,7 @@ const StarParticleMaterial = shaderMaterial(
 
 extend({ StarParticleMaterial });
 
-// Interstellar-style thin accretion disk
+// Interstellar-style thin accretion disk - ULTRA FLASHY
 const GargantuaDiskMaterial = shaderMaterial(
   { time: 0 },
   `
@@ -124,7 +349,7 @@ const GargantuaDiskMaterial = shaderMaterial(
     float fbm(vec2 p) {
       float sum = 0.0;
       float amp = 0.5;
-      for(int i = 0; i < 4; i++) {
+      for(int i = 0; i < 5; i++) {
         sum += amp * noise(p);
         p *= 2.0;
         amp *= 0.5;
@@ -137,63 +362,69 @@ const GargantuaDiskMaterial = shaderMaterial(
       float dist = length(center);
       float angle = atan(center.y, center.x);
 
-      // Inner radius matches event horizon (2.2 on 22-unit plane = 0.1 in UV)
       float innerRadius = 0.10;
       float outerRadius = 0.5;
 
       if (dist < innerRadius || dist > outerRadius) discard;
 
-      // Thin bright ring - concentrated material right outside event horizon
-      float ringCenter = 0.12;
-      float ringWidth = 0.06;
-      float ringFactor = exp(-pow((dist - ringCenter) / ringWidth, 2.0) * 3.0);
+      // Multiple bright rings for flashy effect
+      float ring1 = exp(-pow((dist - 0.12) / 0.04, 2.0) * 2.0);
+      float ring2 = exp(-pow((dist - 0.18) / 0.05, 2.0) * 2.0) * 0.7;
+      float ring3 = exp(-pow((dist - 0.25) / 0.06, 2.0) * 2.0) * 0.5;
+      float ringFactor = ring1 + ring2 + ring3;
 
-      // Secondary wider disk
-      float diskFactor = smoothstep(outerRadius, innerRadius + 0.05, dist) * 0.4;
+      float diskFactor = smoothstep(outerRadius, innerRadius + 0.05, dist) * 0.3;
 
-      // Kepler rotation
-      float rotSpeed = 1.5 / sqrt(dist);
-      float rotAngle = angle + time * rotSpeed * 0.15;
+      // Fast Kepler rotation
+      float rotSpeed = 2.0 / sqrt(dist);
+      float rotAngle = angle + time * rotSpeed * 0.2;
 
-      // Fine structure
-      float structure = fbm(vec2(rotAngle * 6.0, dist * 25.0));
-      float detail = fbm(vec2(rotAngle * 15.0 + time * 0.3, dist * 40.0));
+      // More dramatic structure
+      float structure = fbm(vec2(rotAngle * 8.0, dist * 30.0));
+      float detail = fbm(vec2(rotAngle * 20.0 + time * 0.5, dist * 50.0));
+      float streaks = pow(fbm(vec2(rotAngle * 30.0, dist * 10.0 + time * 0.3)), 2.0);
 
-      // Temperature gradient
       float temp = smoothstep(outerRadius, innerRadius, dist);
 
-      // Interstellar colors - warm white to orange to deep red
-      vec3 hotColor = vec3(1.0, 0.97, 0.95);
-      vec3 warmColor = vec3(1.0, 0.75, 0.45);
-      vec3 coolColor = vec3(0.9, 0.4, 0.15);
+      // More vibrant colors
+      vec3 hotColor = vec3(1.0, 1.0, 0.95);
+      vec3 warmColor = vec3(1.0, 0.6, 0.2);
+      vec3 coolColor = vec3(0.95, 0.3, 0.1);
+      vec3 blueHot = vec3(0.6, 0.8, 1.0);
 
       vec3 col = mix(coolColor, warmColor, temp);
-      col = mix(col, hotColor, pow(temp, 2.0));
+      col = mix(col, hotColor, pow(temp, 1.5));
+      col = mix(col, blueHot, pow(temp, 4.0) * 0.3);
 
-      float brightness = 0.5 + 0.5 * structure;
-      brightness *= 0.85 + 0.15 * detail;
+      float brightness = 0.6 + 0.4 * structure;
+      brightness *= 0.8 + 0.2 * detail;
       brightness *= ringFactor + diskFactor;
+      brightness += streaks * 0.4;
 
-      // Doppler beaming
-      float doppler = 0.4 + 0.6 * cos(angle + 1.5);
-      brightness *= 0.5 + doppler;
+      // Enhanced Doppler beaming
+      float doppler = 0.3 + 0.7 * cos(angle + 1.5);
+      brightness *= 0.4 + doppler * 0.8;
 
-      // Color shift from doppler
-      col = mix(col * vec3(1.15, 0.95, 0.85), col * vec3(0.9, 0.95, 1.05), doppler * 0.4);
+      // Color shift from doppler - more dramatic
+      col = mix(col * vec3(1.3, 0.9, 0.7), col * vec3(0.8, 0.95, 1.2), doppler * 0.5);
+
+      // Pulsing effect
+      float pulse = 0.9 + 0.1 * sin(time * 2.0 + dist * 20.0);
+      brightness *= pulse;
 
       float edgeFade = smoothstep(innerRadius, innerRadius + 0.02, dist);
       edgeFade *= smoothstep(outerRadius, outerRadius - 0.04, dist);
 
       float alpha = brightness * edgeFade;
 
-      gl_FragColor = vec4(col * brightness * 1.2, alpha * 0.95);
+      gl_FragColor = vec4(col * brightness * 1.8, alpha * 0.95);
     }
   `
 );
 
 extend({ GargantuaDiskMaterial });
 
-// Gravitationally lensed ring - hugs the event horizon tightly
+// Gravitationally lensed ring - FLASHY with rainbow shimmer
 const LensedRingMaterial = shaderMaterial(
   { time: 0, isTop: 1.0 },
   `
@@ -212,14 +443,21 @@ const LensedRingMaterial = shaderMaterial(
       return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
     }
 
+    vec3 rainbow(float t) {
+      return vec3(
+        0.5 + 0.5 * sin(t * 6.28 + 0.0),
+        0.5 + 0.5 * sin(t * 6.28 + 2.09),
+        0.5 + 0.5 * sin(t * 6.28 + 4.19)
+      );
+    }
+
     void main() {
       vec2 center = vUv - 0.5;
       float dist = length(center);
       float angle = atan(center.y, center.x);
 
-      // Ring sits right at the event horizon edge (0.22 matches 2.2 radius on 10x10 plane)
-      float ringRadius = 0.225;  // Slightly outside event horizon
-      float ringThickness = 0.012;
+      float ringRadius = 0.225;
+      float ringThickness = 0.015;
 
       float ring = exp(-pow((dist - ringRadius) / ringThickness, 2.0));
 
@@ -231,23 +469,34 @@ const LensedRingMaterial = shaderMaterial(
 
       if (ring < 0.01) discard;
 
-      float variation = noise(vec2(angle * 10.0 + time * 0.2, dist * 25.0));
+      float variation = noise(vec2(angle * 10.0 + time * 0.3, dist * 25.0));
 
-      vec3 col = vec3(1.0, 0.92, 0.75) * (0.8 + 0.2 * variation);
+      // Base warm color with rainbow shimmer
+      vec3 baseCol = vec3(1.0, 0.92, 0.75);
+      vec3 shimmer = rainbow(angle * 0.5 + time * 0.2) * 0.3;
+      vec3 col = baseCol + shimmer;
 
       float doppler = 0.5 + 0.5 * cos(angle + 1.5);
-      col *= 0.7 + 0.3 * doppler;
+      col *= 0.6 + 0.4 * doppler;
 
-      float alpha = ring * (0.9 + 0.1 * variation);
+      // Sparkle effect
+      float sparkle = pow(noise(vec2(angle * 30.0 + time, dist * 50.0)), 6.0) * 2.0;
+      col += vec3(1.0) * sparkle;
 
-      gl_FragColor = vec4(col * 1.8, alpha * 0.9);
+      // Pulse
+      float pulse = 0.9 + 0.1 * sin(time * 3.0 + angle * 5.0);
+      col *= pulse;
+
+      float alpha = ring * (0.95 + 0.05 * variation);
+
+      gl_FragColor = vec4(col * 2.2, alpha * 0.95);
     }
   `
 );
 
 extend({ LensedRingMaterial });
 
-// Photon sphere - bright ring hugging the event horizon
+// Photon sphere - ULTRA bright with pulse
 const PhotonSphereMaterial = shaderMaterial(
   { time: 0 },
   `
@@ -264,25 +513,32 @@ const PhotonSphereMaterial = shaderMaterial(
     void main() {
       vec2 center = vUv - 0.5;
       float dist = length(center);
+      float angle = atan(center.y, center.x);
 
-      // Event horizon edge (matches the 2.2 radius sphere scaled to UV space)
-      // For a 10x10 plane, 2.2 radius = 0.22 in UV (0-0.5 range)
       float eventHorizonRadius = 0.22;
 
-      // Main photon ring - RIGHT at the edge of event horizon
+      // Multiple photon rings
       float ring1 = exp(-pow((dist - eventHorizonRadius) * 80.0, 2.0));
+      float ring2 = exp(-pow((dist - eventHorizonRadius - 0.01) * 60.0, 2.0)) * 0.5;
 
-      // Thin bright edge glow
-      float edgeGlow = smoothstep(eventHorizonRadius + 0.02, eventHorizonRadius, dist) * 0.8;
+      // Edge glow
+      float edgeGlow = smoothstep(eventHorizonRadius + 0.025, eventHorizonRadius, dist) * 0.9;
 
-      float ring = ring1 + edgeGlow;
+      float ring = ring1 + ring2 + edgeGlow;
 
       if (ring < 0.01) discard;
 
-      // Warm bright white
-      vec3 col = vec3(1.0, 0.95, 0.85);
+      // Rotating sparkles
+      float sparkle = pow(sin(angle * 20.0 + time * 2.0), 8.0) * ring1 * 0.5;
 
-      gl_FragColor = vec4(col * ring * 2.0, ring);
+      // Warm bright white with subtle color variation
+      vec3 col = vec3(1.0, 0.95, 0.85);
+      col += vec3(0.2, 0.1, 0.0) * sparkle;
+
+      // Intense pulse
+      float pulse = 0.85 + 0.15 * sin(time * 4.0);
+
+      gl_FragColor = vec4(col * ring * 2.5 * pulse, ring);
     }
   `
 );
@@ -409,13 +665,24 @@ function SpirallingMist({ maxCount = 600 }) {
       vel[i * 3 + 1] = 0;
       vel[i * 3 + 2] = Math.cos(angle) * orbitalSpeed;
 
-      // Misty white/blue colors - softer
-      col[i * 3] = 0.7 + Math.random() * 0.3;
-      col[i * 3 + 1] = 0.75 + Math.random() * 0.25;
-      col[i * 3 + 2] = 0.85 + Math.random() * 0.15;
+      // Colorful initial colors - cyan, purple, pink mix
+      const colorChoice = i % 3;
+      if (colorChoice === 0) {
+        col[i * 3] = 0.4 + Math.random() * 0.2;
+        col[i * 3 + 1] = 0.8 + Math.random() * 0.2;
+        col[i * 3 + 2] = 1.0;
+      } else if (colorChoice === 1) {
+        col[i * 3] = 0.7 + Math.random() * 0.2;
+        col[i * 3 + 1] = 0.4 + Math.random() * 0.2;
+        col[i * 3 + 2] = 1.0;
+      } else {
+        col[i * 3] = 1.0;
+        col[i * 3 + 1] = 0.5 + Math.random() * 0.2;
+        col[i * 3 + 2] = 0.8 + Math.random() * 0.2;
+      }
 
-      // Larger, softer particles for misty look
-      siz[i] = 0.08 + Math.random() * 0.15;
+      // Larger particles for more presence
+      siz[i] = 0.1 + Math.random() * 0.18;
       active[i] = i < 300 ? 1.0 : 0.0;
       age[i] = Math.random() * 10; // Random starting ages
       initRadius[i] = orbitRadius;
@@ -451,12 +718,24 @@ function SpirallingMist({ maxCount = 600 }) {
           velocities[i * 3 + 1] = 0;
           velocities[i * 3 + 2] = Math.cos(angle) * 0.06;
 
-          colAttr.array[i * 3] = 0.7 + Math.random() * 0.3;
-          colAttr.array[i * 3 + 1] = 0.75 + Math.random() * 0.25;
-          colAttr.array[i * 3 + 2] = 0.85 + Math.random() * 0.15;
+          // Colorful spawn colors
+          const colorChoice = Math.floor(Math.random() * 3);
+          if (colorChoice === 0) {
+            colAttr.array[i * 3] = 0.4 + Math.random() * 0.2;
+            colAttr.array[i * 3 + 1] = 0.8 + Math.random() * 0.2;
+            colAttr.array[i * 3 + 2] = 1.0;
+          } else if (colorChoice === 1) {
+            colAttr.array[i * 3] = 0.7 + Math.random() * 0.2;
+            colAttr.array[i * 3 + 1] = 0.4 + Math.random() * 0.2;
+            colAttr.array[i * 3 + 2] = 1.0;
+          } else {
+            colAttr.array[i * 3] = 1.0;
+            colAttr.array[i * 3 + 1] = 0.5 + Math.random() * 0.2;
+            colAttr.array[i * 3 + 2] = 0.8 + Math.random() * 0.2;
+          }
 
-          sizeAttr.array[i] = 0.08 + Math.random() * 0.15;
-          opacityAttr.array[i] = 0.3 + Math.random() * 0.3;
+          sizeAttr.array[i] = 0.1 + Math.random() * 0.15;
+          opacityAttr.array[i] = 0.4 + Math.random() * 0.3;
           activeFlags[i] = 1.0;
           ages[i] = 0;
           initialRadii[i] = spawnRadius;
@@ -511,36 +790,51 @@ function SpirallingMist({ maxCount = 600 }) {
       posAttr.array[i * 3 + 1] += velocities[i * 3 + 1];
       posAttr.array[i * 3 + 2] += velocities[i * 3 + 2];
 
-      // Color transition: white/blue -> yellow -> orange -> red as approaching
+      // Color transition: FLASHY rainbow -> yellow -> orange -> red/magenta as approaching
       const heatFactor = Math.max(0, 1 - dist / 12);
-      const spiralProgress = 1 - (dist / initialRadii[i]); // How far into spiral
 
-      if (dist > 8) {
-        // Far: misty white/blue
-        colAttr.array[i * 3] = 0.7 + Math.random() * 0.1;
-        colAttr.array[i * 3 + 1] = 0.75 + Math.random() * 0.1;
-        colAttr.array[i * 3 + 2] = 0.85 + Math.random() * 0.1;
-      } else if (dist > 5) {
-        // Mid: warming to yellow/orange
-        colAttr.array[i * 3] = 0.9 + heatFactor * 0.1;
-        colAttr.array[i * 3 + 1] = 0.7 - heatFactor * 0.2;
-        colAttr.array[i * 3 + 2] = 0.5 - heatFactor * 0.3;
-      } else {
-        // Close: hot orange/red
+      if (dist > 10) {
+        // Far: colorful mix - cyan, purple, pink
+        const colorChoice = (i % 3);
+        if (colorChoice === 0) {
+          colAttr.array[i * 3] = 0.4 + Math.random() * 0.2;
+          colAttr.array[i * 3 + 1] = 0.8 + Math.random() * 0.2;
+          colAttr.array[i * 3 + 2] = 1.0;
+        } else if (colorChoice === 1) {
+          colAttr.array[i * 3] = 0.7 + Math.random() * 0.2;
+          colAttr.array[i * 3 + 1] = 0.4 + Math.random() * 0.2;
+          colAttr.array[i * 3 + 2] = 1.0;
+        } else {
+          colAttr.array[i * 3] = 1.0;
+          colAttr.array[i * 3 + 1] = 0.5 + Math.random() * 0.2;
+          colAttr.array[i * 3 + 2] = 0.8 + Math.random() * 0.2;
+        }
+      } else if (dist > 6) {
+        // Mid: warming to gold/orange
         colAttr.array[i * 3] = 1.0;
-        colAttr.array[i * 3 + 1] = 0.4 - heatFactor * 0.3;
-        colAttr.array[i * 3 + 2] = 0.1;
-      }
-
-      // Size: grows slightly as gets closer, then shrinks right before consumption
-      if (dist > 4) {
-        sizeAttr.array[i] = (0.1 + Math.random() * 0.05) * (1 + heatFactor * 0.5);
+        colAttr.array[i * 3 + 1] = 0.7 - heatFactor * 0.3;
+        colAttr.array[i * 3 + 2] = 0.3 - heatFactor * 0.2;
+      } else if (dist > 4) {
+        // Close: hot orange/red with magenta
+        colAttr.array[i * 3] = 1.0;
+        colAttr.array[i * 3 + 1] = 0.3 - heatFactor * 0.2;
+        colAttr.array[i * 3 + 2] = 0.2 + heatFactor * 0.3;
       } else {
-        sizeAttr.array[i] = 0.15 * (dist / 4); // Shrink as consumed
+        // Very close: intense white-hot
+        colAttr.array[i * 3] = 1.0;
+        colAttr.array[i * 3 + 1] = 0.9 + Math.random() * 0.1;
+        colAttr.array[i * 3 + 2] = 0.8 + Math.random() * 0.2;
       }
 
-      // Opacity: fade in, then fade out as consumed
-      opacityAttr.array[i] = Math.min(0.5, ages[i] * 0.1) * Math.min(1, dist / 3);
+      // Size: grows as gets closer, then shrinks right before consumption
+      if (dist > 4) {
+        sizeAttr.array[i] = (0.12 + Math.random() * 0.08) * (1 + heatFactor * 0.8);
+      } else {
+        sizeAttr.array[i] = 0.2 * (dist / 4);
+      }
+
+      // Opacity: brighter overall
+      opacityAttr.array[i] = Math.min(0.7, ages[i] * 0.15) * Math.min(1, dist / 3);
 
       // Respawn if consumed
       if (dist < 2.8) {
@@ -556,12 +850,24 @@ function SpirallingMist({ maxCount = 600 }) {
         velocities[i * 3 + 1] = 0;
         velocities[i * 3 + 2] = Math.cos(angle) * 0.06;
 
-        colAttr.array[i * 3] = 0.7 + Math.random() * 0.3;
-        colAttr.array[i * 3 + 1] = 0.75 + Math.random() * 0.25;
-        colAttr.array[i * 3 + 2] = 0.85 + Math.random() * 0.15;
+        // Colorful respawn colors
+        const colorChoice = Math.floor(Math.random() * 3);
+        if (colorChoice === 0) {
+          colAttr.array[i * 3] = 0.4 + Math.random() * 0.2;
+          colAttr.array[i * 3 + 1] = 0.8 + Math.random() * 0.2;
+          colAttr.array[i * 3 + 2] = 1.0;
+        } else if (colorChoice === 1) {
+          colAttr.array[i * 3] = 0.7 + Math.random() * 0.2;
+          colAttr.array[i * 3 + 1] = 0.4 + Math.random() * 0.2;
+          colAttr.array[i * 3 + 2] = 1.0;
+        } else {
+          colAttr.array[i * 3] = 1.0;
+          colAttr.array[i * 3 + 1] = 0.5 + Math.random() * 0.2;
+          colAttr.array[i * 3 + 2] = 0.8 + Math.random() * 0.2;
+        }
 
-        sizeAttr.array[i] = 0.08 + Math.random() * 0.15;
-        opacityAttr.array[i] = 0.1;
+        sizeAttr.array[i] = 0.1 + Math.random() * 0.15;
+        opacityAttr.array[i] = 0.2;
         ages[i] = 0;
         initialRadii[i] = spawnRadius;
       }
@@ -621,8 +927,8 @@ function SpirallingMist({ maxCount = 600 }) {
 
 // No bloom for transparent overlay - bloom breaks alpha channel
 
-// Static background stars - BIGGER and BRIGHTER for visibility
-function BackgroundStars({ count = 350 }) {
+// Static background stars - ULTRA FLASHY with more colors
+function BackgroundStars({ count = 500 }) {
   const meshRef = useRef();
 
   const [positions, colors, sizes] = useMemo(() => {
@@ -632,49 +938,69 @@ function BackgroundStars({ count = 350 }) {
 
     for (let i = 0; i < count; i++) {
       // Spread stars in a sphere around the scene
-      const radius = 25 + Math.random() * 60;
+      const radius = 25 + Math.random() * 80;
       const theta = Math.random() * Math.PI * 2;
       const phi = Math.acos(2 * Math.random() - 1);
 
       pos[i * 3] = radius * Math.sin(phi) * Math.cos(theta);
-      pos[i * 3 + 1] = radius * Math.sin(phi) * Math.sin(theta) * 0.5;
+      pos[i * 3 + 1] = radius * Math.sin(phi) * Math.sin(theta) * 0.6;
       pos[i * 3 + 2] = radius * Math.cos(phi);
 
-      // Star colors - bright white with some variation
+      // More colorful stars
       const colorType = Math.random();
-      if (colorType < 0.5) {
+      if (colorType < 0.3) {
         // Bright white stars
         col[i * 3] = 1.0;
         col[i * 3 + 1] = 1.0;
         col[i * 3 + 2] = 1.0;
-      } else if (colorType < 0.75) {
+      } else if (colorType < 0.45) {
         // Warm yellow/orange stars
         col[i * 3] = 1.0;
-        col[i * 3 + 1] = 0.9 + Math.random() * 0.1;
-        col[i * 3 + 2] = 0.7 + Math.random() * 0.2;
-      } else {
+        col[i * 3 + 1] = 0.85 + Math.random() * 0.15;
+        col[i * 3 + 2] = 0.5 + Math.random() * 0.3;
+      } else if (colorType < 0.6) {
         // Blue-white stars
-        col[i * 3] = 0.85 + Math.random() * 0.15;
+        col[i * 3] = 0.7 + Math.random() * 0.2;
+        col[i * 3 + 1] = 0.85 + Math.random() * 0.15;
+        col[i * 3 + 2] = 1.0;
+      } else if (colorType < 0.75) {
+        // Pink/magenta stars
+        col[i * 3] = 1.0;
+        col[i * 3 + 1] = 0.5 + Math.random() * 0.3;
+        col[i * 3 + 2] = 0.9 + Math.random() * 0.1;
+      } else if (colorType < 0.85) {
+        // Cyan stars
+        col[i * 3] = 0.4 + Math.random() * 0.3;
         col[i * 3 + 1] = 0.9 + Math.random() * 0.1;
+        col[i * 3 + 2] = 1.0;
+      } else {
+        // Purple stars
+        col[i * 3] = 0.7 + Math.random() * 0.2;
+        col[i * 3 + 1] = 0.4 + Math.random() * 0.2;
         col[i * 3 + 2] = 1.0;
       }
 
-      // BIGGER sizes for visibility
-      siz[i] = 0.08 + Math.random() * 0.15;
+      // Varied sizes - some really big bright ones
+      const sizeRandom = Math.random();
+      if (sizeRandom < 0.1) {
+        siz[i] = 0.25 + Math.random() * 0.15; // Big bright stars
+      } else {
+        siz[i] = 0.08 + Math.random() * 0.12;
+      }
     }
 
     return [pos, col, siz];
   }, [count]);
 
-  // Subtle twinkling effect
+  // Dynamic twinkling effect
   useFrame((state) => {
     if (!meshRef.current) return;
     const sizeAttr = meshRef.current.geometry.attributes.size;
     const time = state.clock.elapsedTime;
 
     for (let i = 0; i < count; i++) {
-      // Each star twinkles at its own rate
-      const twinkle = 0.8 + 0.2 * Math.sin(time * (1 + i * 0.1) + i);
+      // Each star twinkles at its own rate - more dramatic
+      const twinkle = 0.7 + 0.3 * Math.sin(time * (2 + i * 0.15) + i);
       sizeAttr.array[i] = sizes[i] * twinkle;
     }
     sizeAttr.needsUpdate = true;
@@ -711,24 +1037,102 @@ function BackgroundStars({ count = 350 }) {
   );
 }
 
+// Cosmic nebula background - billboarded
+function CosmicNebula() {
+  const meshRef = useRef();
+  const { camera } = useThree();
+
+  useFrame((state) => {
+    if (meshRef.current) {
+      meshRef.current.material.time = state.clock.elapsedTime;
+      meshRef.current.quaternion.copy(camera.quaternion);
+    }
+  });
+
+  return (
+    <mesh ref={meshRef} position={[0, 0, -5]}>
+      <planeGeometry args={[80, 80]} />
+      <nebulaMaterial
+        transparent
+        side={THREE.DoubleSide}
+        blending={THREE.AdditiveBlending}
+        depthWrite={false}
+      />
+    </mesh>
+  );
+}
+
+// Lens flare effect - billboarded
+function LensFlare() {
+  const meshRef = useRef();
+  const { camera } = useThree();
+
+  useFrame((state) => {
+    if (meshRef.current) {
+      meshRef.current.material.time = state.clock.elapsedTime;
+      meshRef.current.quaternion.copy(camera.quaternion);
+    }
+  });
+
+  return (
+    <mesh ref={meshRef}>
+      <planeGeometry args={[15, 15]} />
+      <lensFlareMaterial
+        transparent
+        side={THREE.DoubleSide}
+        blending={THREE.AdditiveBlending}
+        depthWrite={false}
+      />
+    </mesh>
+  );
+}
+
+// Energy jets shooting from the poles
+function EnergyJet({ direction = 1 }) {
+  const meshRef = useRef();
+
+  useFrame((state) => {
+    if (meshRef.current) {
+      meshRef.current.material.time = state.clock.elapsedTime;
+    }
+  });
+
+  return (
+    <mesh
+      ref={meshRef}
+      position={[0, direction * 4, 0]}
+      rotation={[direction > 0 ? 0 : Math.PI, 0, 0]}
+    >
+      <planeGeometry args={[3, 8]} />
+      <energyJetMaterial
+        transparent
+        side={THREE.DoubleSide}
+        blending={THREE.AdditiveBlending}
+        depthWrite={false}
+        direction={direction}
+      />
+    </mesh>
+  );
+}
+
 // Slow majestic camera movement
 function CameraRig() {
   const { camera } = useThree();
 
   useFrame((state) => {
-    const t = state.clock.elapsedTime * 0.03;
+    const t = state.clock.elapsedTime * 0.035;
     const radius = 18;
 
     camera.position.x = Math.sin(t) * radius;
     camera.position.z = Math.cos(t) * radius;
-    camera.position.y = Math.sin(t * 0.5) * 4 + 3;
+    camera.position.y = Math.sin(t * 0.5) * 5 + 4;
     camera.lookAt(0, 0, 0);
   });
 
   return null;
 }
 
-// Main scene - no background color for transparency
+// Main scene - ULTRA FLASHY with nebula
 function BlackHoleScene() {
   return (
     <>
@@ -736,11 +1140,21 @@ function BlackHoleScene() {
 
       <CameraRig />
 
-      {/* Static background stars for ambiance */}
-      <BackgroundStars count={250} />
+      {/* Cosmic nebula background */}
+      <CosmicNebula />
 
-      {/* Spiraling particles being consumed */}
-      <SpirallingMist maxCount={600} />
+      {/* Static background stars for ambiance - more of them */}
+      <BackgroundStars count={500} />
+
+      {/* Lens flare effect */}
+      <LensFlare />
+
+      {/* Energy jets from the poles */}
+      <EnergyJet direction={1} />
+      <EnergyJet direction={-1} />
+
+      {/* Spiraling particles being consumed - more of them */}
+      <SpirallingMist maxCount={800} />
 
       <EventHorizon />
       <PhotonSphere />
