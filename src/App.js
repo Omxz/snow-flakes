@@ -1,10 +1,10 @@
 import React from 'react';
-import Snowflakes from './Snowflakes';
+import BlackHole from './Snowflakes';
 
 function App() {
   return (
     <div className="App">
-      <Snowflakes />
+      <BlackHole />
     </div>
   );
 }
